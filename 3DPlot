@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+from argparse import ArgumentParser,RawTextHelpFormatter
+from scipy.interpolate import griddata
+
+INTERPOLATION_METHODS = ["none", "linear", "cubic", "nearest"]
+
+ap = ArgumentParser(formatter_class=RawTextHelpFormatter)
+ap.add_argument("--filename", "-f", type = str, default="", help = "Name of comma-separated value (CSV) file containing data points. Include file extension.")
+ap.add_argument("--surface", "-s", action="store_true", default=False, help="Use this flag to make a surface plot. Otherwise, a heatmap will be plotted by default.")
+ap.add_argument("--interpolation_method", type = str, default="none", help = "For the surface plot, it is possible to interpolate the data to create a smooth plot. The available options are:\n  'none' -- no interpolation\n  'linear' -- crude but quick interpolation\n  'cubic' -- produces a smoother plot but slower\n  'nearest' -- simply assign the value at each grid point to the nearest data point (technically not an interpolation, not recommended unless raw data does not form a grid.)")
+ap.add_argument("--grid_size", type=int, default=100, help="Only used when an interpolation method other than 'none' is specified. An N-by-N square grid is created within the range of the data points in the provided files. This argument specifies N (larger number = smoother plot). ")
+
+aa = ap.parse_args()
+
+# This function is deprecated. Both heatmap and surface plots are now handled by plot_surface_from_csv function below.
+def create_heatmap_from_csv(csv_file):
+	# Read the CSV file into a pandas DataFrame
+	df = pd.read_csv(csv_file, header=None, names=['x', 'y', 'z'])
+	
+	# Extract unique x and y values to form the grid
+	x_values = df['x'].unique()
+	y_values = df['y'].unique()
+	
+	# Reshape the z values into a 2D grid
+	z_grid = df['z'].values.reshape(len(y_values), len(x_values))
+	
+	# Create the heatmap using pcolormesh
+	plt.figure(figsize=(10, 8))
+	plt.pcolormesh(x_values, y_values, z_grid, shading='auto')
+	
+	# Add colorbar
+	plt.colorbar(label='Z Value')
+	
+	# Add labels and title
+	plt.xlabel('X')
+	plt.ylabel('Y')
+	plt.title('Heatmap of Z values over (X, Y)')
+	
+	# Check if a graphical display is available
+	if os.environ.get('DISPLAY', '') == '':
+		print(f"No display found. Saving plot as '{csv_file}_plot_heatmap.pdf'")
+		plt.savefig(f"{csv_file}_plot_heatmap.pdf", format='pdf', bbox_inches='tight')
+	else:
+		plt.show()
+
+
+# Main plotting function.
+def plot_surface_from_csv(filename,interpolation_method="none",plot_type="surface"):
+	if plot_type not in ["surface", "heatmap"]:
+		print("Plot type not recognized. Use 'surface' or 'heatmap'.")
+		print("Terminating")
+		return
+
+	# Read CSV into a pandas DataFrame
+	try:
+		df = pd.read_csv(filename, header=None, names=['x', 'y', 'z'])
+	except Exception as e:
+		print(f"Error reading file: {e}")
+		return
+	
+	# Drop rows with missing/invalid values
+	df = df.dropna()
+	if df.empty:
+		print("No valid data found in the file.")
+		return
+	
+	# Extract numpy arrays
+	x = df['x'].values
+	y = df['y'].values
+	z = df['z'].values
+	
+	# Interpolate the data if required
+	if interpolation_method == "none":
+		# Check if data forms a regular grid
+		xi = np.unique(x)
+		yi = np.unique(y)
+		
+		if len(x) == len(xi) * len(yi):
+			# Reshape into grid format
+			X = x.reshape(len(yi), len(xi))
+			Y = y.reshape(len(yi), len(xi))
+			Z = z.reshape(len(yi), len(xi))
+			
+		else:
+			print("Data points don't form a regular grid. Surface plot requires a regular grid.")
+			print("It is possible to create a grid by interpolating the data. Use the --interpoloation_method tag to use this option. run ./3DPlot --help to see available interpolation methods.")
+			return
+	else:
+		# Create a uniform grid for interpolation
+		xi = np.linspace(min(x), max(x), aa.grid_size)
+		yi = np.linspace(min(y), max(y), aa.grid_size)
+		X, Y = np.meshgrid(xi, yi)
+		
+		# Interpolate Z values
+		Z = griddata((x, y), z, (X, Y), method=interpolation_method)
+
+
+	# Make plot
+	if plot_type=="surface":
+		# Create figure with 3D projection
+		fig = plt.figure(figsize=(10, 8))
+		ax = fig.add_subplot(111, projection='3d')
+
+		# Plot the processed data and add colorbar
+		surf = ax.plot_surface(
+			X, Y, Z,
+			cmap='viridis',
+			rstride=1,
+			cstride=1,
+			edgecolor='none',
+			alpha=0.9,
+			antialiased=True
+		)
+	
+		plt.colorbar(surf, ax=ax, label='Z Value')
+
+		# Enhanced labels and title
+		ax.set_xlabel('X Axis', labelpad=10)
+		ax.set_ylabel('Y Axis', labelpad=10)
+		ax.set_zlabel('Z Axis', labelpad=10)
+		ax.set_title('3D Surface Plot\nZ = f(X, Y)', pad=20)
+		
+		# Adjust viewing angle for better initial perspective
+		ax.view_init(elev=30, azim=45)
+	elif plot_type=="heatmap":
+		# Create the heatmap using pcolormesh
+		plt.figure(figsize=(10, 8))
+		plt.pcolormesh(xi, yi, Z, shading='auto')
+
+	
+	plt.tight_layout()	
+	# Check if a graphical display is available
+	if os.environ.get('DISPLAY', '') == '':
+		print(f"No display found. Saving plot as '{filename}_plot_surface.pdf'")
+		plt.savefig(f"{filename}_plot_surface.pdf", format='pdf', bbox_inches='tight')
+	else:
+		plt.show()
+
+# Example usage
+if __name__ == "__main__":
+	if len(aa.filename) > 0:
+		if aa.surface:
+			if aa.interpolation_method in INTERPOLATION_METHODS:
+				plot_surface_from_csv(aa.filename,interpolation_method = aa.interpolation_method)
+			else:
+				print(f"Interpolation method '{aa.interpolation_method}' not recognized. Defaulting to no interpolation.")
+				print("Run ./3DPlot --help to see a list of available interpolation methods.")
+				plot_surface_from_csv(aa.filename,interpolation_method = "none")
+		else:
+			if aa.interpolation_method in INTERPOLATION_METHODS:
+				plot_surface_from_csv(aa.filename,interpolation_method = aa.interpolation_method,plot_type="heatmap")
+			else:
+				print(f"Interpolation method '{aa.interpolation_method}' not recognized. Defaulting to no interpolation.")
+				print("Run ./3DPlot --help to see a list of available interpolation methods.")
+				plot_surface_from_csv(aa.filename,interpolation_method = "none", plot_type="heatmap")
+	else:
+		print("Please supply a data file name with the tag -f. Run ./3DPlot --help for more details.")
